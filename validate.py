@@ -211,17 +211,21 @@ class RealFakeDataset(Dataset):
             real_list = get_list(real_path)
             fake_list = get_list(fake_path)
 
-
+        # 这里改成: 用尽量多的样本, 而不是强行降到 100
         if max_sample is not None:
-            if (max_sample > len(real_list)) or (max_sample > len(fake_list)):
-                max_sample = 100
-                print("not enough images, max_sample falling to 100")
+            # 希望的上限
+            desired = max_sample
+            # 实际能用的样本数是每类里最小的那个
+            max_sample = min(desired, len(real_list), len(fake_list))
+            if max_sample < desired:
+                print(f"max_sample clipped from {desired} to {max_sample} due to dataset size")
+
             random.shuffle(real_list)
             random.shuffle(fake_list)
-            real_list = real_list[0:max_sample]
-            fake_list = fake_list[0:max_sample]
+            real_list = real_list[:max_sample]
+            fake_list = fake_list[:max_sample]
 
-        assert len(real_list) == len(fake_list)  
+        assert len(real_list) == len(fake_list)
 
         return real_list, fake_list
 
