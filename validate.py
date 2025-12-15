@@ -6,7 +6,16 @@ import torch
 import torchvision.transforms as transforms
 import torch.utils.data
 import numpy as np
-from sklearn.metrics import average_precision_score, precision_recall_curve, accuracy_score
+from sklearn.metrics import (
+    average_precision_score,
+    precision_recall_curve,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+)
+
 from torch.utils.data import Dataset
 import sys
 from models import get_model
@@ -93,42 +102,61 @@ def calculate_acc(y_true, y_pred, thres):
     acc = accuracy_score(y_true, y_pred > thres)
     return r_acc, f_acc, acc    
 
-
 def validate(model, loader, find_thres=False):
 
     with torch.no_grad():
         y_true, y_pred = [], []
-        print ("Length of dataset: %d" %(len(loader)))
+        print(f"Length of dataset: {len(loader.dataset)} samples in {len(loader)} batches")
         for img, label in loader:
             in_tens = img.cuda()
 
             y_pred.extend(model(in_tens).sigmoid().flatten().tolist())
             y_true.extend(label.flatten().tolist())
 
-    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    y_true = np.array(y_true).astype(int)
+    y_pred = np.array(y_pred, dtype=np.float32)
 
-    # ================== save this if you want to plot the curves =========== # 
-    # torch.save( torch.stack( [torch.tensor(y_true), torch.tensor(y_pred)] ),  'baseline_predication_for_pr_roc_curve.pth' )
-    # exit()
-    # =================================================================== #
-    
-    # Get AP 
+    # Get AP
     ap = average_precision_score(y_true, y_pred)
 
     # Acc based on 0.5
     r_acc0, f_acc0, acc0 = calculate_acc(y_true, y_pred, 0.5)
-    if not find_thres:
-        return ap, r_acc0, f_acc0, acc0
 
+    # confusion metrics at threshold 0.5
+    thres_eval = 0.5
+    y_pred_bin = (y_pred > thres_eval).astype(int)
+
+    prec = precision_score(y_true, y_pred_bin, zero_division=0)
+    rec = recall_score(y_true, y_pred_bin, zero_division=0)
+    f1 = f1_score(y_true, y_pred_bin, zero_division=0)
+
+    # confusion matrix: tn, fp, fn, tp
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+
+    if not find_thres:
+        return ap, r_acc0, f_acc0, acc0, prec, rec, f1, tp, tn, fp, fn
 
     # Acc based on the best thres
     best_thres = find_best_threshold(y_true, y_pred)
     r_acc1, f_acc1, acc1 = calculate_acc(y_true, y_pred, best_thres)
 
-    return ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres
-
-    
-    
+    return (
+        ap,
+        r_acc0,
+        f_acc0,
+        acc0,
+        r_acc1,
+        f_acc1,
+        acc1,
+        best_thres,
+        prec,
+        rec,
+        f1,
+        tp,
+        tn,
+        fp,
+        fn,
+    )
 
 
 
@@ -320,10 +348,25 @@ if __name__ == '__main__':
             num_workers=4,
         )
 
-        ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres = validate(
-            model, loader, find_thres=True
-        )
+        (
+            ap,
+            r_acc0,
+            f_acc0,
+            acc0,
+            r_acc1,
+            f_acc1,
+            acc1,
+            best_thres,
+            prec,
+            rec,
+            f1,
+            tp,
+            tn,
+            fp,
+            fn,
+        ) = validate(model, loader, find_thres=True)
 
+        # 仍然保留原来的文本输出
         with open(os.path.join(opt.result_folder, "ap.txt"), "a") as f:
             f.write(dataset_path["key"] + ": " + str(round(ap * 100, 2)) + "\n")
 
@@ -339,3 +382,63 @@ if __name__ == '__main__':
                 + "\n"
             )
 
+        # 终端直接打印你关心的指标
+        print(
+            f"{dataset_path['key']} @ thresh=0.5: "
+            f"acc={acc0*100:.2f} "
+            f"prec={prec*100:.2f} "
+            f"recall={rec*100:.2f} "
+            f"f1={f1*100:.2f} "
+            f"tp={tp} tn={tn} fp={fp} fn={fn}"
+        )
+
+        # 可选: 写一个 csv 文件方便你后面统一整理
+        csv_path = os.path.join(opt.result_folder, f"{dataset_path['key']}_metrics.csv")
+        with open(csv_path, "w", newline="") as f_csv:
+            writer = csv.writer(f_csv)
+            writer.writerow(
+                [
+                    "key",
+                    "num_samples",
+                    "threshold",
+                    "accuracy",
+                    "precision",
+                    "recall",
+                    "f1",
+                    "tp",
+                    "tn",
+                    "fp",
+                    "fn",
+                    "ap",
+                    "r_acc0",
+                    "f_acc0",
+                    "r_acc1",
+                    "f_acc1",
+                    "acc1",
+                    "best_thres",
+                ]
+            )
+            num_samples = len(dataset)
+            writer.writerow(
+                [
+                    dataset_path["key"],
+                    num_samples,
+                    0.5,
+                    acc0,
+                    prec,
+                    rec,
+                    f1,
+                    tp,
+                    tn,
+                    fp,
+                    fn,
+                    ap,
+                    r_acc0,
+                    f_acc0,
+                    r_acc1,
+                    f_acc1,
+                    acc1,
+                    best_thres,
+                ]
+            )
+        print(f"Metrics csv saved to {csv_path}")
