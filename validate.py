@@ -278,35 +278,60 @@ if __name__ == '__main__':
     model = get_model(opt.arch)
     state_dict = torch.load(opt.ckpt, map_location='cpu')
     model.fc.load_state_dict(state_dict)
-    print ("Model loaded..")
+    print("Model loaded..")
     model.eval()
     model.cuda()
 
-    if (opt.real_path == None) or (opt.fake_path == None) or (opt.data_mode == None):
-        dataset_paths = DATASET_PATHS
+    # 如果用户给了 real/fake/data_mode，就只用这一个自定义数据集
+    if (opt.real_path is not None) and (opt.fake_path is not None) and (opt.data_mode is not None):
+        dataset_paths = [
+            dict(
+                key="CVPJ_Val",
+                real_path=opt.real_path,
+                fake_path=opt.fake_path,
+                data_mode=opt.data_mode,
+            )
+        ]
     else:
-        dataset_paths = [ dict(real_path=opt.real_path, fake_path=opt.fake_path, data_mode=opt.data_mode) ]
+        # 否则用原来的 DATASET_PATHS（作者默认那堆数据集）
+        dataset_paths = DATASET_PATHS
 
-
-
-    for dataset_path in (dataset_paths):
+    for dataset_path in dataset_paths:
         set_seed()
 
-        dataset = RealFakeDataset(  dataset_path['real_path'], 
-                                    dataset_path['fake_path'], 
-                                    dataset_path['data_mode'], 
-                                    opt.max_sample, 
-                                    opt.arch,
-                                    jpeg_quality=opt.jpeg_quality, 
-                                    gaussian_sigma=opt.gaussian_sigma,
-                                    )
+        dataset = RealFakeDataset(
+            dataset_path["real_path"],
+            dataset_path["fake_path"],
+            dataset_path["data_mode"],
+            opt.max_sample,
+            opt.arch,
+            jpeg_quality=opt.jpeg_quality,
+            gaussian_sigma=opt.gaussian_sigma,
+        )
 
-        loader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size, shuffle=False, num_workers=4)
-        ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres = validate(model, loader, find_thres=True)
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=opt.batch_size,
+            shuffle=False,
+            num_workers=4,
+        )
 
-        with open( os.path.join(opt.result_folder,'ap.txt'), 'a') as f:
-            f.write(dataset_path['key']+': ' + str(round(ap*100, 2))+'\n' )
+        ap, r_acc0, f_acc0, acc0, r_acc1, f_acc1, acc1, best_thres = validate(
+            model, loader, find_thres=True
+        )
 
-        with open( os.path.join(opt.result_folder,'acc0.txt'), 'a') as f:
-            f.write(dataset_path['key']+': ' + str(round(r_acc0*100, 2))+'  '+str(round(f_acc0*100, 2))+'  '+str(round(acc0*100, 2))+'\n' )
+        with open(os.path.join(opt.result_folder, "ap.txt"), "a") as f:
+            f.write(dataset_path["key"] + ": " + str(round(ap * 100, 2)) + "\n")
+
+        with open(os.path.join(opt.result_folder, "acc0.txt"), "a") as f:
+            f.write(
+                dataset_path["key"]
+                + ": "
+                + str(round(r_acc0 * 100, 2))
+                + "  "
+                + str(round(f_acc0 * 100, 2))
+                + "  "
+                + str(round(acc0 * 100, 2))
+                + "\n"
+            )
 
