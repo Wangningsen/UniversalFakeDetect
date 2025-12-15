@@ -102,6 +102,22 @@ def calculate_acc(y_true, y_pred, thres):
     acc = accuracy_score(y_true, y_pred > thres)
     return r_acc, f_acc, acc    
 
+def compute_metrics_at_threshold(y_true, y_pred, thres):
+    """
+    在给定阈值 thres 下计算:
+    acc, prec, recall, f1, tp, tn, fp, fn
+    """
+    y_pred_bin = (y_pred > thres).astype(int)
+
+    acc = accuracy_score(y_true, y_pred_bin)
+    prec = precision_score(y_true, y_pred_bin, zero_division=0)
+    rec = recall_score(y_true, y_pred_bin, zero_division=0)
+    f1 = f1_score(y_true, y_pred_bin, zero_division=0)
+
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+
+    return acc, prec, rec, f1, tp, tn, fp, fn
+
 def validate(model, loader, find_thres=False):
 
     with torch.no_grad():
@@ -116,46 +132,79 @@ def validate(model, loader, find_thres=False):
     y_true = np.array(y_true).astype(int)
     y_pred = np.array(y_pred, dtype=np.float32)
 
-    # Get AP
+    # AP
     ap = average_precision_score(y_true, y_pred)
 
-    # Acc based on 0.5
-    r_acc0, f_acc0, acc0 = calculate_acc(y_true, y_pred, 0.5)
-
-    # confusion metrics at threshold 0.5
-    thres_eval = 0.5
-    y_pred_bin = (y_pred > thres_eval).astype(int)
-
-    prec = precision_score(y_true, y_pred_bin, zero_division=0)
-    rec = recall_score(y_true, y_pred_bin, zero_division=0)
-    f1 = f1_score(y_true, y_pred_bin, zero_division=0)
-
-    # confusion matrix: tn, fp, fn, tp
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred_bin).ravel()
+    # 阈值 0.5 下的指标
+    base_thres = 0.5
+    base_r_acc, base_f_acc, base_acc = calculate_acc(y_true, y_pred, base_thres)
+    (
+        base_acc2,
+        base_prec,
+        base_rec,
+        base_f1,
+        base_tp,
+        base_tn,
+        base_fp,
+        base_fn,
+    ) = compute_metrics_at_threshold(y_true, y_pred, base_thres)
+    # sanity: base_acc 和 base_acc2 应该一致
+    assert abs(base_acc - base_acc2) < 1e-6
 
     if not find_thres:
-        return ap, r_acc0, f_acc0, acc0, prec, rec, f1, tp, tn, fp, fn
+        # 不找最优阈值时, 只返回 0.5 下的指标
+        return (
+            ap,
+            base_r_acc,
+            base_f_acc,
+            base_acc,
+            base_prec,
+            base_rec,
+            base_f1,
+            base_tp,
+            base_tn,
+            base_fp,
+            base_fn,
+        )
 
-    # Acc based on the best thres
+    # 计算 best_thres 以及对应指标
     best_thres = find_best_threshold(y_true, y_pred)
-    r_acc1, f_acc1, acc1 = calculate_acc(y_true, y_pred, best_thres)
+    best_r_acc, best_f_acc, best_acc = calculate_acc(y_true, y_pred, best_thres)
+    (
+        best_acc2,
+        best_prec,
+        best_rec,
+        best_f1,
+        best_tp,
+        best_tn,
+        best_fp,
+        best_fn,
+    ) = compute_metrics_at_threshold(y_true, y_pred, best_thres)
+    assert abs(best_acc - best_acc2) < 1e-6
 
     return (
         ap,
-        r_acc0,
-        f_acc0,
-        acc0,
-        r_acc1,
-        f_acc1,
-        acc1,
+        base_r_acc,
+        base_f_acc,
+        base_acc,
+        base_prec,
+        base_rec,
+        base_f1,
+        base_tp,
+        base_tn,
+        base_fp,
+        base_fn,
         best_thres,
-        prec,
-        rec,
-        f1,
-        tp,
-        tn,
-        fp,
-        fn,
+        best_r_acc,
+        best_f_acc,
+        best_acc,
+        best_prec,
+        best_rec,
+        best_f1,
+        best_tp,
+        best_tn,
+        best_fp,
+        best_fn,
     )
 
 
@@ -350,95 +399,123 @@ if __name__ == '__main__':
 
         (
             ap,
-            r_acc0,
-            f_acc0,
-            acc0,
-            r_acc1,
-            f_acc1,
-            acc1,
+            base_r_acc,
+            base_f_acc,
+            base_acc,
+            base_prec,
+            base_rec,
+            base_f1,
+            base_tp,
+            base_tn,
+            base_fp,
+            base_fn,
             best_thres,
-            prec,
-            rec,
-            f1,
-            tp,
-            tn,
-            fp,
-            fn,
+            best_r_acc,
+            best_f_acc,
+            best_acc,
+            best_prec,
+            best_rec,
+            best_f1,
+            best_tp,
+            best_tn,
+            best_fp,
+            best_fn,
         ) = validate(model, loader, find_thres=True)
 
-        # 仍然保留原来的文本输出
+        key = dataset_path["key"]
+        num_samples = len(dataset)
+
+        # 保留原作者的 ap.txt / acc0.txt 行为, acc0 仍然是 0.5 阈值
         with open(os.path.join(opt.result_folder, "ap.txt"), "a") as f:
-            f.write(dataset_path["key"] + ": " + str(round(ap * 100, 2)) + "\n")
+            f.write(key + ": " + str(round(ap * 100, 2)) + "\n")
 
         with open(os.path.join(opt.result_folder, "acc0.txt"), "a") as f:
             f.write(
-                dataset_path["key"]
+                key
                 + ": "
-                + str(round(r_acc0 * 100, 2))
+                + str(round(base_r_acc * 100, 2))
                 + "  "
-                + str(round(f_acc0 * 100, 2))
+                + str(round(base_f_acc * 100, 2))
                 + "  "
-                + str(round(acc0 * 100, 2))
+                + str(round(base_acc * 100, 2))
                 + "\n"
             )
 
-        # 终端直接打印你关心的指标
+        # 终端打印两套指标: 0.5 和 best_thres
         print(
-            f"{dataset_path['key']} @ thresh=0.5: "
-            f"acc={acc0*100:.2f} "
-            f"prec={prec*100:.2f} "
-            f"recall={rec*100:.2f} "
-            f"f1={f1*100:.2f} "
-            f"tp={tp} tn={tn} fp={fp} fn={fn}"
+            f"[{key}] thresh=0.5  "
+            f"acc={base_acc*100:.2f}  prec={base_prec*100:.2f}  "
+            f"recall={base_rec*100:.2f}  f1={base_f1*100:.2f}  "
+            f"tp={base_tp} tn={base_tn} fp={base_fp} fn={base_fn}"
+        )
+        print(
+            f"[{key}] best_thres={best_thres:.4f}  "
+            f"acc={best_acc*100:.2f}  prec={best_prec*100:.2f}  "
+            f"recall={best_rec*100:.2f}  f1={best_f1*100:.2f}  "
+            f"tp={best_tp} tn={best_tn} fp={best_fp} fn={best_fn}"
         )
 
-        # 可选: 写一个 csv 文件方便你后面统一整理
-        csv_path = os.path.join(opt.result_folder, f"{dataset_path['key']}_metrics.csv")
+        # 另外写一个 csv, 带上两套指标, 方便和你自己的模型对比
+        csv_path = os.path.join(opt.result_folder, f"{key}_metrics.csv")
         with open(csv_path, "w", newline="") as f_csv:
             writer = csv.writer(f_csv)
             writer.writerow(
                 [
                     "key",
                     "num_samples",
-                    "threshold",
-                    "accuracy",
-                    "precision",
-                    "recall",
-                    "f1",
-                    "tp",
-                    "tn",
-                    "fp",
-                    "fn",
                     "ap",
-                    "r_acc0",
-                    "f_acc0",
-                    "r_acc1",
-                    "f_acc1",
-                    "acc1",
-                    "best_thres",
+                    "base_threshold",
+                    "base_acc",
+                    "base_prec",
+                    "base_recall",
+                    "base_f1",
+                    "base_tp",
+                    "base_tn",
+                    "base_fp",
+                    "base_fn",
+                    "base_r_acc",
+                    "base_f_acc",
+                    "best_threshold",
+                    "best_acc",
+                    "best_prec",
+                    "best_recall",
+                    "best_f1",
+                    "best_tp",
+                    "best_tn",
+                    "best_fp",
+                    "best_fn",
+                    "best_r_acc",
+                    "best_f_acc",
                 ]
             )
-            num_samples = len(dataset)
             writer.writerow(
                 [
-                    dataset_path["key"],
+                    key,
                     num_samples,
-                    0.5,
-                    acc0,
-                    prec,
-                    rec,
-                    f1,
-                    tp,
-                    tn,
-                    fp,
-                    fn,
                     ap,
-                    r_acc0,
-                    f_acc0,
-                    r_acc1,
-                    f_acc1,
-                    acc1,
+                    0.5,
+                    base_acc,
+                    base_prec,
+                    base_rec,
+                    base_f1,
+                    base_tp,
+                    base_tn,
+                    base_fp,
+                    base_fn,
+                    base_r_acc,
+                    base_f_acc,
                     best_thres,
+                    best_acc,
+                    best_prec,
+                    best_rec,
+                    best_f1,
+                    best_tp,
+                    best_tn,
+                    best_fp,
+                    best_fn,
+                    best_r_acc,
+                    best_f_acc,
                 ]
             )
         print(f"Metrics csv saved to {csv_path}")
+
